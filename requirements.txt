@@ -2,5 +2,8 @@ requests
 feedparser
 bs4
 dateparser
-random
 openai
+flask
+flask-cors
+lxml
+python-dateutil

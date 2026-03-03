@@ -1,26 +1,61 @@
 # How Did They Do?
 
 Fetches old news headlines from the [Wayback Machine](https://web.archive.org/),
-uses an LLM to identify articles that made specific predictions, and then
-evaluates those predictions against real-world outcomes — scoring each one on a
-−10 to +10 scale.
+uses an LLM to identify articles that made specific predictions, and evaluates
+those predictions against real-world outcomes — scoring each one on a −10 to +10
+scale. Results are stored in a SQLite database and presented in a React web UI
+with upvote/downvote voting.
 
-## How It Works
+## Architecture
 
-1. **Fetch** — Either pulls a live RSS feed directly, or picks a random
-   historical snapshot from the Wayback Machine CDX index.
-2. **Classify** — Each headline + summary is sent to the LLM with a structured
-   prompt. Articles that contain a clear, specific prediction (especially in
-   tech or finance) are flagged, along with the prediction text, timeframe
-   phrase, and target year.
-3. **Analyze** — Each flagged prediction is re-sent to the LLM, which retrieves
-   facts, compares the prediction to reality, assigns a score, and explains its
-   reasoning.
+```
+┌─────────────────────┐     SQLite      ┌────────────────────┐
+│   backend/daemon.py │ ──────────────► │  data/predictions  │
+│  (runs periodically)│                 │       .db          │
+└─────────────────────┘                 └────────┬───────────┘
+                                                 │
+                                        ┌────────▼───────────┐
+                                        │  backend/api.py    │
+                                        │  Flask REST API    │
+                                        │  :5000             │
+                                        └────────┬───────────┘
+                                                 │ /api/predictions/*
+                                        ┌────────▼───────────┐
+                                        │  frontend/         │
+                                        │  React + Tailwind  │
+                                        │  Vite dev :5173    │
+                                        └────────────────────┘
+```
+
+### Pipeline (one run)
+
+1. **Fetch** — Picks a random historical snapshot from the Wayback Machine CDX
+   index, or falls back to the live RSS feed (`USE_BACKFEED = 0`).
+2. **Classify** — Each headline + summary is sent to the LLM. Articles
+   containing a clear, specific prediction are flagged, with the prediction text,
+   timeframe phrase, and target year extracted.
+3. **Analyse** — Each flagged prediction is sent back to the LLM, which
+   compares it to real-world outcomes, assigns a score (−10 to +10), and
+   explains its reasoning.
+4. **Store** — Results are written to SQLite (duplicates silently ignored).
+
+The daemon runs the pipeline up to `MAX_RUNS_PER_INTERVAL` times per interval,
+stopping early once `TARGET_PREDICTIONS_PER_INTERVAL` new predictions are
+inserted.
+
+---
 
 ## Requirements
 
 - Python 3.10+
+- Node.js 18+
 - An OpenAI API key **or** a local [Ollama](https://ollama.com/) server
+
+---
+
+## Setup
+
+### 1. Python environment
 
 ```bash
 python -m venv .venv
@@ -28,80 +63,134 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Configuration
+### 2. Configuration
 
-Copy `config.py` and fill in your key (it is git-ignored):
+Edit `src/config.py` (git-ignored) and set your API key and preferences:
 
 ```python
-# config.py
 OPENAI_API_KEY = "sk-..."
 ```
 
-## Key Variables (`main2.py`)
+See the [Configuration reference](#configuration-reference) below for all options.
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `RSS_URL` | MarketWatch top stories | RSS feed to analyse |
-| `USE_BACKFEED` | `1` | `1` = random Wayback snapshot, `0` = live feed |
-| `LLM_BACKEND` | `"openai"` | `"openai"` or `"ollama"` |
-| `LLM_MODEL` | `"gpt-4.1"` | OpenAI model name |
-| `OLLAMA_MODEL` | `"granite4:350m"` | Ollama model name (when backend is `"ollama"`) |
-| `WAYBACK_TIMEOUT` | `60` | Request timeout in seconds (Wayback is slow) |
-
-## Usage
+### 3. Frontend
 
 ```bash
-# Run with a random historical snapshot (USE_BACKFEED = 1)
-.venv/bin/python main2.py
-
-# Run against the live feed (set USE_BACKFEED = 0 in main2.py)
-.venv/bin/python main2.py
+cd frontend
+npm install
 ```
 
-### Example Output
+---
 
-```
-Fetching articles...
+## Running
 
-Wayback availability URL: http://archive.org/wayback/available?url=http://www.marketwatch.com/rss/topstories
-Wayback Machine: found snapshot 20120727220238 → http://web.archive.org/web/...
-Randomly selected snapshot: 20120727220238 (from 1498 available)
+### Start / stop all services
 
-Classifying 10 article(s) with gpt-4.1 (openai)...
+```bash
+# Start API + daemon in background (logs → logs/)
+./scripts/manage_services.sh start
 
-  -> Apple planning significant AI features for next iPhone cycle
-     [PREDICTION] Apple intends to ship major AI capabilities in the next iPhone.
-       Target year: 2013 (phrase: "next year")
+# Stop both
+./scripts/manage_services.sh stop
 
-----------------------------------------------------------------------
+# Restart
+./scripts/manage_services.sh restart
 
-Found 1 prediction article(s). Analyzing outcomes...
-
-1. Apple planning significant AI features for next iPhone cycle
-   Published  : 2012-07-27 21:00:00
-   Prediction : Apple intends to ship major AI capabilities in the next iPhone.
-   Timeframe  : next year -> 2013
-   Score      : +4/10  [          >████]
-   Analysis   : Apple introduced Siri improvements in iOS 7 (2013) but fell
-                short of "significant AI features" by later standards.
-   Facts      :
-     • iOS 7 shipped September 2013 with incremental Siri updates.
-     • Dedicated neural hardware did not arrive until the A11 Bionic in 2017.
+# Check what's running
+./scripts/manage_services.sh status
 ```
 
-## Files
+Logs are written to `logs/api.log` and `logs/daemon.log`.
+PID files live in `data/api.pid` and `data/daemon.pid`.
 
-| File | Purpose |
-|---|---|
-| `main2.py` | Main script — fetch, classify, analyse |
-| `prompts.py` | LLM prompt templates (`PREDICTION_PROMPT`, `ANALYSIS_PROMPT`) |
-| `config.py` | API keys (git-ignored) |
-| `requirements.txt` | Python dependencies |
+### Frontend dev server
+
+```bash
+cd frontend
+npm run dev        # http://localhost:5173  (proxies /api → :5000)
+```
+
+### Run the CLI pipeline once (no daemon)
+
+```bash
+.venv/bin/python src/main.py
+```
+
+---
+
+## Configuration reference
+
+All settings live in `src/config.py`.
+
+| Variable                          | Default                               | Purpose                                                         |
+| --------------------------------- | ------------------------------------- | --------------------------------------------------------------- |
+| `OPENAI_API_KEY`                  | —                                     | OpenAI API key (required when `LLM_BACKEND = "openai"`)         |
+| `RSS_URL`                         | MarketWatch top stories               | RSS feed to analyse                                             |
+| `WAYBACK_TIMEOUT`                 | `60`                                  | HTTP timeout in seconds for Wayback requests                    |
+| `USE_BACKFEED`                    | `1`                                   | `1` = random Wayback snapshot · `0` = live feed                 |
+| `LLM_BACKEND`                     | `"openai"`                            | `"openai"` or `"ollama"`                                        |
+| `LLM_MODEL`                       | `"gpt-4.1"`                           | OpenAI model name                                               |
+| `OLLAMA_URL`                      | `http://localhost:11434/api/generate` | Ollama endpoint (when `LLM_BACKEND = "ollama"`)                 |
+| `OLLAMA_MODEL`                    | `"granite4:350m"`                     | Ollama model name                                               |
+| `RUN_INTERVAL_SECONDS`            | `7200`                                | How often the daemon runs (seconds)                             |
+| `MAX_RUNS_PER_INTERVAL`           | `4`                                   | Maximum pipeline attempts per interval                          |
+| `TARGET_PREDICTIONS_PER_INTERVAL` | `4`                                   | Stop attempts early once this many new predictions are inserted |
+| `RUN_ATTEMPT_DELAY_SECONDS`       | `10`                                  | Pause between repeated attempts within one interval             |
+| `DB_PATH`                         | `data/predictions.db`                 | SQLite database path                                            |
+
+---
+
+## API endpoints
+
+| Method | Path                         | Description                                |
+| ------ | ---------------------------- | ------------------------------------------ | -------- |
+| GET    | `/api/predictions/recent`    | Latest 10 predictions, sorted by net votes |
+| GET    | `/api/predictions/top`       | Top 10 all-time by net votes               |
+| POST   | `/api/predictions/<id>/vote` | Cast a vote — body: `{"direction":"up"     | "down"}` |
+
+---
+
+## Project structure
+
+```
+howdidtheydo/
+├── backend/
+│   ├── api.py          Flask REST API (port 5000)
+│   ├── daemon.py       Background loop: pipeline → SQLite
+│   ├── db.py           SQLite helpers (init, insert, vote, query)
+│   └── pipeline.py     Core fetch / classify / analyse logic
+├── frontend/
+│   └── src/
+│       ├── App.jsx                 Tab layout, polling
+│       ├── components/
+│       │   ├── PredictionCard.jsx  Card layout with date prefix
+│       │   ├── ScoreBar.jsx        −10 … +10 colour bar
+│       │   ├── VoteButtons.jsx     Up/down with localStorage dedup
+│       │   └── DebugLog.jsx        Collapsible pipeline log
+│       └── hooks/useVote.js        Vote state persisted to localStorage
+├── src/
+│   ├── config.py       All settings (git-ignored)
+│   ├── prompts.py      LLM prompt templates
+│   └── main.py         Standalone CLI pipeline script
+├── scripts/
+│   └── manage_services.sh   start / stop / restart / status
+├── data/               SQLite DB + PID files (git-ignored)
+├── logs/               Service logs (git-ignored)
+└── requirements.txt
+```
+
+---
 
 ## Notes
 
-- The Wayback Machine can be slow or rate-limited. `WAYBACK_TIMEOUT = 60` helps
-  but you may still see occasional failures. Set `USE_BACKFEED = 0` to bypass it.
-- The availability endpoint tries several URL variants (http/https, www, trailing
-  slash) to maximise the chance of finding a snapshot.
-- Both LLM calls (classification and analysis) show a spinner while waiting.
+- **Wayback rate limits** — The Wayback Machine can be slow. `WAYBACK_TIMEOUT = 60`
+  helps, but occasional failures are normal. Set `USE_BACKFEED = 0` to use the
+  live feed instead.
+- **URL variant probing** — The availability check tries http/https, www/no-www,
+  and trailing-slash variants to maximise snapshot discovery.
+- **Duplicate suppression** — `INSERT OR IGNORE` on `(title, published, rss_url)`
+  means re-running the pipeline on the same snapshot is safe.
+- **LLM verbatim check** — If the LLM returns a prediction that is too similar
+  to the article summary (Jaccard ≥ 0.8), a paraphrase is requested automatically.
+- **Switching LLM backends** — Change `LLM_BACKEND` in `src/config.py` and
+  restart the daemon. The frontend has no control over the model.
