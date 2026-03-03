@@ -1,0 +1,6 @@
+requests
+feedparser
+bs4
+dateparser
+random
+openai
