@@ -194,3 +194,21 @@ howdidtheydo/
   to the article summary (Jaccard ≥ 0.8), a paraphrase is requested automatically.
 - **Switching LLM backends** — Change `LLM_BACKEND` in `src/config.py` and
   restart the daemon. The frontend has no control over the model.
+
+### Building the frontend (production)
+
+1. Ensure Node.js 18+ is installed on the server.
+
+2. From the project root, install deps and build the static assets:
+
+   cd frontend
+   npm install # installs Vite and frontend dependencies locally
+   npm run build # produces production assets in frontend/dist
+
+3. Preview or serve the built files (optional):
+
+   # quick preview (uses local vite preview)
+
+   npx vite preview --port 5173
+
+   # or configure your webserver (nginx) or Flask/Gunicorn to serve frontend/dist as static files
