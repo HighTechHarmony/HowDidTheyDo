@@ -1,0 +1,19 @@
+[Unit]
+Description=HowDidTheyDo — Flask API (gunicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=scott
+Group=scott
+WorkingDirectory=/home/scott/dev/howdidtheydo
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/scott/dev/howdidtheydo/.venv/bin/gunicorn --chdir /home/scott/dev/howdidtheydo -w 4 -b 127.0.0.1:5000 backend.api:app
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+

@@ -1,0 +1,19 @@
+[Unit]
+Description=HowDidTheyDo — backend daemon
+After=network.target
+
+[Service]
+Type=simple
+User=scott
+Group=scott
+WorkingDirectory=/home/scott/dev/howdidtheydo
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/scott/dev/howdidtheydo/.venv/bin/python -m backend.daemon
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+
