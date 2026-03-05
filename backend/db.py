@@ -129,6 +129,41 @@ def get_top_all_time(limit=10):
     return [_row_to_dict(r) for r in rows]
 
 
+def get_recent_page(page=1, per_page=10):
+    """Return a page of recent predictions and the total count.
+
+    Results are ordered by created_at DESC, but returned list is then
+    sorted by net votes (upvotes - downvotes) to preserve previous behaviour
+    for the visible ordering.
+    """
+    conn = _connect()
+    total = conn.execute("SELECT COUNT(*) as c FROM predictions").fetchone()[0]
+    offset = max(0, (page - 1) * per_page)
+    rows = conn.execute("""
+        SELECT * FROM predictions
+        ORDER BY created_at DESC
+        LIMIT ? OFFSET ?
+    """, (per_page, offset)).fetchall()
+    conn.close()
+    results = [_row_to_dict(r) for r in rows]
+    results.sort(key=lambda r: (r.get("upvotes", 0) - r.get("downvotes", 0)), reverse=True)
+    return results, total
+
+
+def get_top_page(page=1, per_page=10):
+    """Return a page of top predictions (by net votes) and the total count."""
+    conn = _connect()
+    total = conn.execute("SELECT COUNT(*) as c FROM predictions").fetchone()[0]
+    offset = max(0, (page - 1) * per_page)
+    rows = conn.execute("""
+        SELECT * FROM predictions
+        ORDER BY (upvotes - downvotes) DESC
+        LIMIT ? OFFSET ?
+    """, (per_page, offset)).fetchall()
+    conn.close()
+    return [_row_to_dict(r) for r in rows], total
+
+
 def vote(prediction_id, direction):
     """Increment upvotes or downvotes for a prediction.
 
