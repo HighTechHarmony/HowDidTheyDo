@@ -18,7 +18,7 @@ Rules:
 - Always return valid JSON.
 - Important: Do NOT copy the headline or summary verbatim. Restate any prediction concisely
 - in your own words (aim for 5-20 words) and avoid repeating the summary text exactly.
-- A preference is given to predictions related to the tech industry and finance sectors, but other topics are rarely acceptable if they score very high on specificity.
+- Topics may span any domain as long as the prediction is specific and verifiable.
 
 
 
@@ -56,6 +56,10 @@ Scoring rubric:
 -3 to +3: Mixed, vague, or partially correct.
 -4 to -7: Directionally wrong or significantly off.
 -8 to -10: Completely wrong or opposite of reality.
+
+Be skeptical. Apply the rubric strictly. Predictions that were only partially correct,
+or right directionally but wrong in magnitude or timing, should score between 0 and +3
+at most. When the evidence is ambiguous, err toward a lower score. Do not be generous.
 
 Return JSON:
 {

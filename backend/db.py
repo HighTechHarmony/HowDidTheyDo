@@ -91,6 +91,21 @@ def insert_prediction(data):
         conn.close()
 
 
+def article_exists(title, published, rss_url):
+    """Return True if a row with this (title, published, rss_url) is already in the DB.
+
+    Uses the same columns as the UNIQUE constraint so the query hits the index.
+    `published` should be an ISO-format string (or None).
+    """
+    conn = _connect()
+    row = conn.execute(
+        "SELECT 1 FROM predictions WHERE title = ? AND published = ? AND rss_url = ?",
+        (title, published, rss_url),
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
 def _row_to_dict(row):
     """Convert a sqlite3.Row to a plain dict, deserialising JSON fields."""
     d = dict(row)

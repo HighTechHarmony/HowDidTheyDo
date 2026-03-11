@@ -13,10 +13,12 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 from dateutil import parser as dateparser
+from urllib.parse import urlparse, urlunparse, urlencode, parse_qs
 from openai import OpenAI
 
 # Allow imports from the project root
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from backend.db import article_exists
 from src.config import (
     OPENAI_API_KEY, RSS_URL, WAYBACK_TIMEOUT, USE_BACKFEED,
     LLM_BACKEND, LLM_MODEL, OLLAMA_URL, OLLAMA_MODEL,
@@ -175,6 +177,24 @@ def fetch_archived_rss(url, timestamp, log):
 #  RSS parsing
 # ---------------------------------------------------------------------------
 
+# Query-string keys added by RSS feeds that Wayback Machine rarely crawled.
+_RSS_TRACKING_PARAMS = {"siteid", "rss", "rss_url", "feedname", "ns_mchannel", "ns_campaign"}
+
+
+def _strip_rss_params(url):
+    """Remove RSS-feed tracking params from a URL so Wayback matches are more likely."""
+    if not url:
+        return url
+    try:
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query, keep_blank_values=True)
+        cleaned = {k: v for k, v in qs.items() if k.lower() not in _RSS_TRACKING_PARAMS}
+        new_query = urlencode(cleaned, doseq=True)
+        return urlunparse(parsed._replace(query=new_query))
+    except Exception:
+        return url
+
+
 def parse_rss_items(xml_text):
     """Extract RSS items (title, summary, pubDate)."""
     soup = BeautifulSoup(xml_text, "xml")
@@ -182,12 +202,13 @@ def parse_rss_items(xml_text):
     for item in soup.find_all("item"):
         title = item.title.text if item.title else ""
         summary = item.description.text if item.description else ""
-        # try to extract the article URL from <link> or <guid>
+        # try to extract the article URL from <link> or <guid>.
+        # Strip RSS tracking params so the Wayback URL is more likely to resolve.
         link = ""
         if item.link and item.link.text:
-            link = item.link.text.strip()
+            link = _strip_rss_params(item.link.text.strip())
         elif item.guid and item.guid.text:
-            link = item.guid.text.strip()
+            link = _strip_rss_params(item.guid.text.strip())
         pub = item.pubDate.text if item.pubDate else ""
         try:
             pub_date = dateparser.parse(pub)
@@ -379,7 +400,13 @@ def run_pipeline():
     for item in items:
         title_short = (item.get("title") or "")[:80]
         log.append(f"→ {title_short}")
-
+        # Pre-check: skip this article if it's already in the DB before making
+        # any LLM calls.  Uses the same (title, published, rss_url) unique key.
+        pub = item.get("published")
+        published_str = pub.isoformat() if pub else None
+        if article_exists(item.get("title", ""), published_str, RSS_URL):
+            log.append("  [duplicate — skipping]")
+            continue
         classification = classify_article(item, log)
         if not classification or not classification.get("is_prediction"):
             log.append(f"  [no prediction]")

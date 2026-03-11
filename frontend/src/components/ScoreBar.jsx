@@ -5,6 +5,11 @@
 export default function ScoreBar({ score }) {
   // Normalise -10…+10 → 0…100%
   const pct = ((score + 10) / 20) * 100;
+  // Distance from centre (50%). Negative = extends left, positive = extends right.
+  const halfPct = pct - 50;
+  // Bar starts at the leftmost edge of the range, always anchored at centre.
+  const barLeft = Math.min(50, pct);
+  const barWidth = Math.abs(halfPct);
 
   // Colour by score
   let color;
@@ -18,10 +23,12 @@ export default function ScoreBar({ score }) {
     <div className="flex items-center gap-3">
       <span className="text-xs text-gray-500 w-6 text-right">-10</span>
       <div className="flex-1 h-3 bg-gray-800 rounded-full relative overflow-hidden">
-        {/* filled portion */}
+        {/* centre tick – marks score 0 */}
+        <div className="absolute inset-y-0 left-1/2 w-px bg-gray-600" />
+        {/* filled portion – extends left or right from centre */}
         <div
-          className={`absolute inset-y-0 left-0 ${color} rounded-full transition-all`}
-          style={{ width: `${pct}%` }}
+          className={`absolute inset-y-0 ${color} rounded-full transition-all`}
+          style={{ left: `${barLeft}%`, width: `${barWidth}%` }}
         />
       </div>
       <span className="text-xs text-gray-500 w-6">+10</span>
