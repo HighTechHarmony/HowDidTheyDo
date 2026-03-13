@@ -50,6 +50,39 @@ def init_db():
     cols = [r[1] for r in cur.fetchall()]
     if "article_url" not in cols:
         conn.execute("ALTER TABLE predictions ADD COLUMN article_url TEXT")
+
+    # ---- Migration: remove any pre-existing duplicate titles ---------------
+    # Keep the row with the highest id (most recent insertion) for each title
+    # so the UNIQUE index below can be created without an IntegrityError even
+    # on databases that accumulated duplicates before this fix was applied.
+    conn.execute("""
+        DELETE FROM predictions
+        WHERE id NOT IN (
+            SELECT MAX(id) FROM predictions GROUP BY title
+        )
+        AND title IN (
+            SELECT title FROM predictions GROUP BY title HAVING COUNT(*) > 1
+        )
+    """)
+    conn.commit()
+
+    # Headline uniqueness — enforced at the DB level so INSERT OR IGNORE also
+    # catches duplicates that slip through the Python pre-check (e.g. when
+    # `published` is NULL and the UNIQUE(title, published, rss_url) constraint
+    # cannot fire correctly due to SQLite NULL semantics).
+    conn.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_predictions_title
+        ON predictions (title)
+    """)
+
+    # Article-URL uniqueness — partial index excludes NULL article_url rows so
+    # articles without a resolved URL don't block each other.
+    conn.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_predictions_article_url
+        ON predictions (article_url)
+        WHERE article_url IS NOT NULL
+    """)
+
     conn.commit()
     conn.close()
 
@@ -96,11 +129,53 @@ def article_exists(title, published, rss_url):
 
     Uses the same columns as the UNIQUE constraint so the query hits the index.
     `published` should be an ISO-format string (or None).
+
+    NOTE: Uses IS-based NULL-safe comparison for `published` because SQLite
+    evaluates `NULL = NULL` as NULL (not TRUE), which caused articles whose
+    pubDate could not be parsed to bypass this check on every run.
     """
     conn = _connect()
     row = conn.execute(
-        "SELECT 1 FROM predictions WHERE title = ? AND published = ? AND rss_url = ?",
-        (title, published, rss_url),
+        """
+        SELECT 1 FROM predictions
+        WHERE title = ?
+          AND rss_url = ?
+          AND (published = ? OR (published IS NULL AND ? IS NULL))
+        """,
+        (title, rss_url, published, published),
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
+def title_exists(title):
+    """Return True if any row with this exact headline already exists.
+
+    This is the simplest possible deduplication guard — it fires regardless of
+    `published` date, feed URL, or any other field.  Use it as a fast
+    short-circuit before making any LLM calls.
+    """
+    conn = _connect()
+    row = conn.execute(
+        "SELECT 1 FROM predictions WHERE title = ?",
+        (title,),
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
+def url_exists(article_url):
+    """Return True if any row with this article_url already exists.
+
+    Catches the case where the same article URL appears in another snapshot
+    with a corrected/different headline.  NULL / empty URLs are never matched.
+    """
+    if not article_url:
+        return False
+    conn = _connect()
+    row = conn.execute(
+        "SELECT 1 FROM predictions WHERE article_url = ?",
+        (article_url,),
     ).fetchone()
     conn.close()
     return row is not None

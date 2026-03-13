@@ -18,7 +18,7 @@ from openai import OpenAI
 
 # Allow imports from the project root
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from backend.db import article_exists
+from backend.db import article_exists, title_exists, url_exists
 from src.config import (
     OPENAI_API_KEY, RSS_URL, WAYBACK_TIMEOUT, USE_BACKFEED,
     LLM_BACKEND, LLM_MODEL, OLLAMA_URL, OLLAMA_MODEL,
@@ -401,11 +401,21 @@ def run_pipeline():
         title_short = (item.get("title") or "")[:80]
         log.append(f"→ {title_short}")
         # Pre-check: skip this article if it's already in the DB before making
-        # any LLM calls.  Uses the same (title, published, rss_url) unique key.
+        # any LLM calls.  Three independent guards are checked in order of cost;
+        # the first match short-circuits all remaining checks.
         pub = item.get("published")
         published_str = pub.isoformat() if pub else None
-        if article_exists(item.get("title", ""), published_str, RSS_URL):
-            log.append("  [duplicate — skipping]")
+        item_title = item.get("title", "")
+        item_url   = item.get("link") or None
+
+        if title_exists(item_title):
+            log.append("  [duplicate — headline already in DB, skipping]")
+            continue
+        if url_exists(item_url):
+            log.append("  [duplicate — article_url already in DB, skipping]")
+            continue
+        if article_exists(item_title, published_str, RSS_URL):
+            log.append("  [duplicate — (title, published, rss_url) match, skipping]")
             continue
         classification = classify_article(item, log)
         if not classification or not classification.get("is_prediction"):
