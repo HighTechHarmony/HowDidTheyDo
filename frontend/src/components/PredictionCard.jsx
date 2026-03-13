@@ -20,6 +20,22 @@ function formatDateWithOrdinal(iso) {
   }
 }
 
+// format date+time for 'Added' display
+function formatDateTime(iso) {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
 function ExternalLinkIcon() {
   return (
     <svg
@@ -70,7 +86,17 @@ export default function PredictionCard({ prediction: p, onVote }) {
             <ExternalLinkIcon />
           </a>
         )}
-      </h2>
+
+      {/* show date/time added if present (backend provides `created_at`) */}
+      {(() => {
+        const addedIso = p.created_at || p.added_at || p.inserted_at || null;
+        const added = addedIso ? formatDateTime(addedIso) : null;
+        return added ? (
+          <p className="text-xs text-gray-500 mb-2">Added: {added}</p>
+        ) : null;
+      })()}
+
+          {/* ── Prediction quote ─────────────────────────────────────────── */}
 
       {/* ── Prediction quote ──────────────────────────────────────────── */}
       <p className="text-lg text-indigo-300 italic mb-2">
