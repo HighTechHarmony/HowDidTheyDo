@@ -86,6 +86,7 @@ export default function PredictionCard({ prediction: p, onVote }) {
             <ExternalLinkIcon />
           </a>
         )}
+      </h2>
 
       {/* show date/time added if present (backend provides `created_at`) */}
       {(() => {
